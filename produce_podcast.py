@@ -42,22 +42,12 @@ def db_create_connection():
         sys.exit()
 
 
-def db_new_podcast(description):
+def db_return_next_episode():
     conn = db_create_connection()
     cur = conn.cursor()
-    date = datetime.now().strftime("%Y-%m-%d")
+    cur.execute("SELECT number FROM episode ORDER BY date ASC LIMIT 1")
 
-    cur.execute("INSERT INTO episode (date, description) VALUES (?, ?);", (date, description,))
-
-    # Close the cursor and connection when done with the query
-    cur.close()
-    conn.close()
-
-    conn2 = db_create_connection()
-    cur2 = conn2.cursor()
-    cur2.execute("SELECT number FROM episode where date=?", (date,))
-
-    rows = cur2.fetchall()
+    rows = cur.fetchall()
 
     if len(rows) == 0:
         value = 0  # Or raise an exception like: raise Exception("No matching row found")
@@ -71,10 +61,21 @@ def db_new_podcast(description):
         raise Exception("More than one row returned, which is unexpected")
 
     # Close the cursor and connection when done with the query
-    cur2.close()
-    conn2.close()
+    cur.close()
+    conn.close()
 
-    return value
+    return value + 1
+
+
+def db_insert_episode(episode, description):
+    conn = db_create_connection()
+    cur = conn.cursor()
+    date = int(time.time())
+
+    cur.execute("INSERT INTO episode (number, date, description) VALUES (?, ?, ?);", (episode, date, description,))
+
+    cur.close()
+    conn.close()
 
 
 def db_get_secret(tag):
@@ -114,8 +115,6 @@ def get_presigned_url(access_token, filename, file_size, content_type):
     response = requests.get(url, params=params)
     if response.status_code == 200:
         data = response.json()
-        print(data.get("presigned_url"))
-        print(data.get("file_key"))
         return data.get("presigned_url"), data.get("file_key")
     else:
         # Handle API request failure
@@ -361,10 +360,8 @@ def upload_file(out_file, episode, description):
     content_type = 'audio/mpeg'
     access_token = check_and_refresh_access_token()
     presigned_url, file_key = get_presigned_url(access_token, filename, file_size, content_type)
-    print(presigned_url)
-    print(file_key)
     upload_file_via_presigned_url(presigned_url, filename)
-    date = datetime.now().strftime("%d %M %y")
+    date = datetime.now().strftime("%B %d, %Y")
     title = f'Washington Watch Ep. {episode} {date}'
     current_unix_time = int(time.time())
     create_podcast_episode(access_token, title, description, file_key, episode, current_unix_time)
@@ -418,7 +415,7 @@ def product_description(script, api_key):
 
 
 def main():
-    episode = 6
+    episode = db_return_next_episode()
     api_key = db_get_secret('openai_api')
     video_ids = get_list_of_videos()
     transcript = get_transcripts(video_ids)
@@ -427,6 +424,7 @@ def main():
     out_file = merge_files(episode)
     description = product_description(script, api_key)
     upload_file(out_file, episode, description)
+    db_insert_episode(episode, description)
 
 
 if __name__ == "__main__":
