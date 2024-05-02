@@ -1,14 +1,15 @@
 import sys
-from sqlite3 import Error
-
 import requests
 import json
-import subprocess
 import time
 import sqlite3
 import os
 from youtube_transcript_api import YouTubeTranscriptApi
 from datetime import datetime, timedelta
+from pydub import AudioSegment
+from sqlite3 import Error
+
+
 def trim_string(s, max_length):
     if len(s) <= max_length:
         return s  # No need to trim if string length is already within the limit
@@ -261,17 +262,35 @@ def text_to_speech(processed_text, api_key):
     # Prepare headers with bearer token
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Accept": "audio/mpeg"  # Request MP3 format response
     }
 
     # Make API request to TTS API
     response = requests.post("https://api.openai.com/v1/audio/speech", headers=headers, json=payload)
 
     # Save the resulting mp3 file
-    current_date = datetime.now().strftime("%Y-%m-%d")
-    output_file = f"show-{current_date}.mp3"
-    with open(output_file, 'wb') as f:
-        f.write(response.content)
+    if response.status_code == 200:
+        # Determine content type from response headers
+        content_type = response.headers.get('Content-Type', '')
+
+        # Check if the response is in MP3 format
+        if 'audio/mpeg' in content_type:
+            audio_data = response.content  # Use the MP3 data directly
+        elif 'audio/wav' in content_type:
+            # Convert WAV to MP3 using pydub
+            audio = AudioSegment.from_wav(response.content)
+            audio_data = audio.export(format="mp3").read()
+        else:
+            raise ValueError(f"Unsupported content type: {content_type}")
+
+        # Save the resulting MP3 file
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        output_file = f"show-{current_date}.mp3"
+        with open(output_file, 'wb') as f:
+            f.write(audio_data)
+    else:
+        raise Exception(f"API request failed with status code: {response.status_code} - {response.text}")
 
 
 def merge_files(episode):
@@ -280,10 +299,15 @@ def merge_files(episode):
 
     in_file = f"show-{current_date}.mp3"
     out_file = f"episode-{episode}-{current_date}.mp3"
-    print("You need to run the following code")
-    print(f'ffmpeg -i part1.mp3 -i {in_file} -i part3.mp3 -filter_complex "concat=n=3:v=0:a=1[out]" -map "[out]" {out_file}')
+    dir_path = os.path.dirname(os.path.realpath(__file__))
 
-    print("Then visit https://admin5.podbean.com/WashingtonWatch/dashboard/index and upload it.")
+    os.system(f'ffmpeg -i {dir_path}/part1.mp3 -i {dir_path}/{in_file} -i {dir_path}/part3.mp3 -filter_complex "concat=n=3:v=0:a=1[out]" -map "[out]" {dir_path}/{out_file}')
+    time.sleep(5)
+    if not os.path.exists(f'{dir_path}/{out_file}'):
+        print('File merge failed, please run the following command to find out why')
+        print(f'ffmpeg -i part1.mp3 -i {in_file} -i part3.mp3 -filter_complex "concat=n=3:v=0:a=1[out]" -map "[out]" {out_file}')
+        sys.exit(0)
+
     return out_file
 
 
@@ -318,20 +342,17 @@ def create_podcast_episode(access_token, title, content, media_key, logo_key, tr
         print(response.text)  # Print error message if available
 
 
-def upload_file(out_file, episode):
+def upload_file(out_file, episode, description):
     file_size = os.path.getsize(out_file)
     filename = out_file
     content_type = 'audio/mpeg'
     access_token = check_and_refresh_access_token()
     presigned_url = get_presigned_url(access_token, filename, file_size, content_type)
     upload_file_via_presigned_url(presigned_url, filename)
-    title = f'Washington Watch Ep. {episode} '
+    date = datetime.now().strftime("%d %M %y")
+    title = f'Washington Watch Ep. {episode} {date}'
     current_unix_time = int(time.time())
-    content = ("Washington Watch, is a concise podcast delivering timely insights into U.S. political developments "
-               "from the nation's capital. Each episode, lasting under 5 minutes, provides a succinct overview of key "
-               "events, policy updates, and political analysis relevant to Washington, D.C. Stay informed with daily "
-               "episodes that offer a quick, digestible snapshot of the latest in American politics.")
-    create_podcast_episode(access_token, title, content, filename, 'thumb.png', '', 1, episode, current_unix_time,
+    create_podcast_episode(access_token, title, description, filename, 'thumb.png', '', 1, episode, current_unix_time,
                            'clean')
     # https://developers.podbean.com/podbean-api-docs/#api-Episode-Publish_New_Episode
 
@@ -379,17 +400,19 @@ def product_description(script, api_key):
         print(response.json())
         sys.exit()
 
-    print(processed_text)
+    return processed_text
 
 
 def main():
+    episode = 6
     api_key = db_get_secret('openai_api')
     video_ids = get_list_of_videos()
     transcript = get_transcripts(video_ids)
     script = product_script(transcript, api_key)
     text_to_speech(script, api_key)
-    out_file = merge_files(2)
-    product_description(script, api_key)
+    out_file = merge_files(episode)
+    description = product_description(script, api_key)
+    upload_file(out_file, episode, description)
 
 
 if __name__ == "__main__":
