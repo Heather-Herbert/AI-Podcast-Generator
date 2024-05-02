@@ -10,6 +10,21 @@ from pydub import AudioSegment
 from sqlite3 import Error
 
 
+def trim_text(text, max_length=500):
+    if len(text) <= max_length:
+        return text
+
+    # Find the last occurrence of a full stop within the maximum length
+    last_full_stop_index = text.rfind('.', 0, max_length)
+
+    if last_full_stop_index == -1:
+        # If no full stop found within the limit, simply truncate at max_length
+        return text[:max_length]
+
+    # Return text trimmed at the last full stop within the limit
+    return text[:last_full_stop_index + 1]
+
+
 def trim_string(s, max_length):
     if len(s) <= max_length:
         return s  # No need to trim if string length is already within the limit
@@ -99,7 +114,9 @@ def get_presigned_url(access_token, filename, file_size, content_type):
     response = requests.get(url, params=params)
     if response.status_code == 200:
         data = response.json()
-        return data.get("presigned_url")
+        print(data.get("presigned_url"))
+        print(data.get("file_key"))
+        return data.get("presigned_url"), data.get("file_key")
     else:
         # Handle API request failure
         print(f"Error: {response.text}")
@@ -156,9 +173,9 @@ def upload_file_via_presigned_url(presigned_url, file_path):
     with open(file_path, 'rb') as file:
         response = requests.put(presigned_url, data=file)
         if response.status_code == 200:
-            print("File uploaded successfully.")
+            print(f"File uploaded successfully. ]{response.text}[")
         else:
-            print(f"Upload failed with status code: {response.status_code}")
+            print(f"Upload failed with status code: {response.status_code} - {response.text}")
             sys.exit(0)
 
 
@@ -311,8 +328,7 @@ def merge_files(episode):
     return out_file
 
 
-def create_podcast_episode(access_token, title, content, media_key, logo_key, transcripts_key,
-                           season_number, episode_number, publish_timestamp, content_explicit):
+def create_podcast_episode(access_token, title, content, media_key, episode_number, publish_timestamp):
     url = "https://api.podbean.com/v1/episodes"
     headers = {
         "Content-Type": "application/x-www-form-urlencoded"
@@ -324,13 +340,10 @@ def create_podcast_episode(access_token, title, content, media_key, logo_key, tr
         "status": "publish",
         "type": "public",
         "media_key": media_key,
-        "logo_key": logo_key,
-        "transcripts_key": transcripts_key,
-        "season_number": season_number,
         "episode_number": episode_number,
         "apple_episode_type": "full",
         "publish_timestamp": publish_timestamp,
-        "content_explicit": content_explicit
+        "content_explicit": "clean"
     }
 
     response = requests.post(url, headers=headers, data=data)
@@ -347,13 +360,14 @@ def upload_file(out_file, episode, description):
     filename = out_file
     content_type = 'audio/mpeg'
     access_token = check_and_refresh_access_token()
-    presigned_url = get_presigned_url(access_token, filename, file_size, content_type)
+    presigned_url, file_key = get_presigned_url(access_token, filename, file_size, content_type)
+    print(presigned_url)
+    print(file_key)
     upload_file_via_presigned_url(presigned_url, filename)
     date = datetime.now().strftime("%d %M %y")
     title = f'Washington Watch Ep. {episode} {date}'
     current_unix_time = int(time.time())
-    create_podcast_episode(access_token, title, description, filename, 'thumb.png', '', 1, episode, current_unix_time,
-                           'clean')
+    create_podcast_episode(access_token, title, description, file_key, episode, current_unix_time)
     # https://developers.podbean.com/podbean-api-docs/#api-Episode-Publish_New_Episode
 
 
@@ -378,7 +392,7 @@ def product_description(script, api_key):
             },
             {
                 "role": "user",
-                "content": f"please provide a description for the following podcast script, no longer than 500 characters in length /n '{script}'"
+                "content": f"please provide a description for the following podcast script, no longer than 400 characters in length /n '{script}'"
             }
         ]
     }
@@ -400,7 +414,7 @@ def product_description(script, api_key):
         print(response.json())
         sys.exit()
 
-    return processed_text
+    return trim_text(processed_text, 500)
 
 
 def main():
