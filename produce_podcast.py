@@ -45,7 +45,7 @@ def db_create_connection():
 def db_return_next_episode():
     conn = db_create_connection()
     cur = conn.cursor()
-    cur.execute("SELECT number FROM episode ORDER BY date ASC LIMIT 1")
+    cur.execute("SELECT number FROM episode ORDER BY date DESC LIMIT 1")
 
     rows = cur.fetchall()
 
@@ -311,7 +311,6 @@ def text_to_speech(processed_text, api_key):
 
 def merge_files(episode):
     current_date = datetime.now().strftime("%Y-%m-%d")
-    episode = episode + 1
 
     in_file = f"show-{current_date}.mp3"
     out_file = f"episode-{episode}-{current_date}.mp3"
