@@ -69,13 +69,21 @@ def db_return_next_episode():
 
 def db_insert_episode(episode, description):
     conn = db_create_connection()
-    cur = conn.cursor()
-    date = int(time.time())
+    if conn:
+        try:
+            cur = conn.cursor()
+            date = int(time.time())
 
-    cur.execute("INSERT INTO episode (number, date, description) VALUES (?, ?, ?);", (episode, date, description,))
+            cur.execute("INSERT INTO episode (number, date, description) VALUES (?, ?, ?);",
+                        (episode, date, description,))
+            conn.commit()  # Don't forget to commit changes
 
-    cur.close()
-    conn.close()
+            cur.close()
+            conn.close()
+        except sqlite3.Error as e:
+            print("SQLite error: ", e)
+    else:
+        print("Failed to create database connection.")
 
 
 def db_get_secret(tag):
@@ -316,11 +324,13 @@ def merge_files(episode):
     out_file = f"episode-{episode}-{current_date}.mp3"
     dir_path = os.path.dirname(os.path.realpath(__file__))
 
-    os.system(f'ffmpeg -i {dir_path}/part1.mp3 -i {dir_path}/{in_file} -i {dir_path}/part3.mp3 -filter_complex "concat=n=3:v=0:a=1[out]" -map "[out]" {dir_path}/{out_file}')
+    os.system(
+        f'ffmpeg -i {dir_path}/part1.mp3 -i {dir_path}/{in_file} -i {dir_path}/part3.mp3 -filter_complex "concat=n=3:v=0:a=1[out]" -map "[out]" {dir_path}/{out_file}')
     time.sleep(5)
     if not os.path.exists(f'{dir_path}/{out_file}'):
         print('File merge failed, please run the following command to find out why')
-        print(f'ffmpeg -i part1.mp3 -i {in_file} -i part3.mp3 -filter_complex "concat=n=3:v=0:a=1[out]" -map "[out]" {out_file}')
+        print(
+            f'ffmpeg -i part1.mp3 -i {in_file} -i part3.mp3 -filter_complex "concat=n=3:v=0:a=1[out]" -map "[out]" {out_file}')
         sys.exit(0)
 
     return out_file
