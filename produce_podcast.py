@@ -74,8 +74,8 @@ def db_insert_episode(episode, description):
             cur = conn.cursor()
             date = int(time.time())
 
-            cur.execute("INSERT INTO episode (number, date, description) VALUES (?, ?, ?);",
-                        (episode, date, description,))
+            cur.execute("INSERT INTO episode (date, description) VALUES (?, ?);",
+                        (date, description,))
             conn.commit()  # Don't forget to commit changes
 
             cur.close()
