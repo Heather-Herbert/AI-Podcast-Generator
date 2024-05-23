@@ -4,6 +4,7 @@ import json
 import time
 import sqlite3
 import os
+import random
 from youtube_transcript_api import YouTubeTranscriptApi
 from datetime import datetime, timedelta
 from pydub import AudioSegment
@@ -25,6 +26,12 @@ def trim_text(text, max_length=500):
     return text[:last_full_stop_index + 1]
 
 
+def generate_filename():
+    """Generates a random filename of the form 'part1.X.mp3'."""
+    random_number = random.randint(0, 20)
+    return f"{random_number}.mp3"
+
+
 def trim_string(s, max_length):
     if len(s) <= max_length:
         return s  # No need to trim if string length is already within the limit
@@ -35,7 +42,9 @@ def trim_string(s, max_length):
 def db_create_connection():
     try:
         conn = None
-        conn = sqlite3.connect('podcast.db')
+        dir_path = os.path.dirname(os.path.realpath(__file__))
+        file_location = f'{dir_path}/podcast.db'
+        conn = sqlite3.connect(file_location)
         return conn
     except Error as e:
         print(e)
@@ -45,7 +54,7 @@ def db_create_connection():
 def db_return_next_episode():
     conn = db_create_connection()
     cur = conn.cursor()
-    cur.execute("SELECT number FROM episode ORDER BY date DESC LIMIT 1")
+    cur.execute("SELECT number FROM episode ORDER BY number DESC LIMIT 1")
 
     rows = cur.fetchall()
 
@@ -67,7 +76,7 @@ def db_return_next_episode():
     return value + 1
 
 
-def db_insert_episode(episode, description):
+def db_insert_episode(description):
     conn = db_create_connection()
     if conn:
         try:
@@ -242,7 +251,7 @@ def product_script(transcription_text, api_key):
                            "scripts for podcasts, all scripts must be free of notes or direction and only contain the "
                            "words to be read out loud. Washington Watch, your podcast, is a concise podcast "
                            "delivering timely insights into U.S. political developments from the nation's capital. "
-                           "Each episode, lasting under 5 minutes, provides a succinct overview of key events, "
+                           "Each episode, lasting under 5 minutes or under 4096 characters, provides a succinct overview of key events, "
                            "policy updates, and political analysis relevant to Washington, D.C. Stay informed with "
                            "daily episodes that offer a quick, digestible snapshot of the latest in American politics. "
                            "Please do not include any name within the script other than the podcast name Washington Watch"
@@ -310,7 +319,8 @@ def text_to_speech(processed_text, api_key):
 
         # Save the resulting MP3 file
         current_date = datetime.now().strftime("%Y-%m-%d")
-        output_file = f"show-{current_date}.mp3"
+        dir_path = os.path.dirname(os.path.realpath(__file__))
+        output_file = f"{dir_path}/show-{current_date}.mp3"
         with open(output_file, 'wb') as f:
             f.write(audio_data)
     else:
@@ -323,9 +333,11 @@ def merge_files(episode):
     in_file = f"show-{current_date}.mp3"
     out_file = f"episode-{episode}-{current_date}.mp3"
     dir_path = os.path.dirname(os.path.realpath(__file__))
+    part1 = f"{dir_path}/Part1.{generate_filename()}"
+    part3 = f"{dir_path}/Part3.{generate_filename()}"
 
     os.system(
-        f'ffmpeg -i {dir_path}/part1.mp3 -i {dir_path}/{in_file} -i {dir_path}/part3.mp3 -filter_complex "concat=n=3:v=0:a=1[out]" -map "[out]" {dir_path}/{out_file}')
+        f'ffmpeg -i {part1} -i {dir_path}/{in_file} -i {part3} -filter_complex "concat=n=3:v=0:a=1[out]" -map "[out]" {dir_path}/{out_file}')
     time.sleep(5)
     if not os.path.exists(f'{dir_path}/{out_file}'):
         print('File merge failed, please run the following command to find out why')
@@ -364,12 +376,13 @@ def create_podcast_episode(access_token, title, content, media_key, episode_numb
 
 
 def upload_file(out_file, episode, description):
-    file_size = os.path.getsize(out_file)
+    dir_path = os.path.dirname(os.path.realpath(__file__))
+    file_size = os.path.getsize(f"{dir_path}/{out_file}")
     filename = out_file
     content_type = 'audio/mpeg'
     access_token = check_and_refresh_access_token()
     presigned_url, file_key = get_presigned_url(access_token, filename, file_size, content_type)
-    upload_file_via_presigned_url(presigned_url, filename)
+    upload_file_via_presigned_url(presigned_url, f"{dir_path}/{out_file}")
     date = datetime.now().strftime("%B %d, %Y")
     title = f'Washington Watch Ep. {episode} {date}'
     current_unix_time = int(time.time())
@@ -423,6 +436,14 @@ def product_description(script, api_key):
     return trim_text(processed_text, 500)
 
 
+def clean_up(out_file):
+    dir_path = os.path.dirname(os.path.realpath(__file__))
+    os.remove(f"{dir_path}/{out_file}")
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    in_file = f"{dir_path}/show-{current_date}.mp3"
+    os.remove(in_file)
+
+
 def main():
     episode = db_return_next_episode()
     api_key = db_get_secret('openai_api')
@@ -433,7 +454,8 @@ def main():
     out_file = merge_files(episode)
     description = product_description(script, api_key)
     upload_file(out_file, episode, description)
-    db_insert_episode(episode, description)
+    db_insert_episode(description)
+    clean_up(out_file)
 
 
 if __name__ == "__main__":
